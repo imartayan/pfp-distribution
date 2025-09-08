@@ -10,7 +10,7 @@ rayon = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 simd-minimizers = "1.4"
-simd-minimizers-alt = { package = "simd-minimizers", git = "https://github.com/rust-seq/simd-minimizers.git", branch = "rot7" }
+simd-minimizers-alt = { package = "simd-minimizers", git = "https://github.com/rust-seq/simd-minimizers.git", branch = "rot" }
 
 [features]
 alt = []

@@ -1,0 +1,148 @@
+use clap::Parser;
+use core::array::from_fn;
+use needletail::parse_fastx_file;
+use packed_seq::u32x8;
+use packed_seq::{PackedSeq, PackedSeqVec, SeqVec};
+use rayon::prelude::*;
+use rayon::{ThreadPoolBuilder, current_num_threads};
+use serde::Serialize;
+use std::time::Instant;
+
+#[cfg(not(feature = "alt"))]
+use simd_minimizers as simd_mini;
+#[cfg(feature = "alt")]
+use simd_minimizers_alt as simd_mini;
+
+#[cfg(feature = "mul")]
+use simd_mini::private::nthash::MulHasher as SIMDHasher;
+#[cfg(not(feature = "mul"))]
+use simd_mini::private::nthash::NtHasher as SIMDHasher;
+
+use simd_mini::packed_seq;
+use simd_mini::private::collect::collect_and_dedup_into;
+use simd_mini::private::nthash::nthash_seq_simd;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Input file (FASTA, possibly compressed) [default: random seq]
+    #[arg(short, long)]
+    input: Option<String>,
+    /// Output file for histogram (JSON) [default: stdout]
+    #[arg(short, long)]
+    output: Option<String>,
+    /// Window size
+    #[arg(short, num_args = 1..)]
+    w: Vec<usize>,
+    /// Sampling factor of the windows
+    #[arg(short, num_args = 1..)]
+    p: Vec<usize>,
+    /// Hash seed [default: none]
+    #[arg(short, long)]
+    seed: Option<u32>,
+    /// Number of threads [default: all]
+    #[arg(short, long)]
+    threads: Option<usize>,
+}
+
+fn main() {
+    const DEFAULT_LEN: usize = 100_000_000;
+
+    let args = Args::parse();
+    let threads = if let Some(t) = args.threads {
+        ThreadPoolBuilder::new()
+            .num_threads(t)
+            .build_global()
+            .unwrap();
+        t
+    } else {
+        current_num_threads()
+    };
+
+    let seqs = if let Some(path) = args.input {
+        let mut seqs = vec![PackedSeqVec::default(); threads];
+        let mut i = 0;
+        let mut reader = parse_fastx_file(path).unwrap();
+        while let Some(record) = reader.next() {
+            seqs[i].push_ascii(&record.unwrap().seq());
+            i += 1;
+            if i == threads {
+                i = 0;
+            }
+        }
+        seqs
+    } else {
+        (0..threads)
+            .map(|_| PackedSeqVec::random(DEFAULT_LEN))
+            .collect()
+    };
+
+    let input_size = seqs.iter().map(|seq| seq.len()).sum::<usize>();
+    let start = Instant::now();
+
+    let mut hists = Vec::with_capacity(args.w.len() * args.p.len());
+    args.p.iter().for_each(|&p| {
+        args.w.iter().for_each(|&w| {
+            hists.push(compute_hist(&seqs, w, p, args.seed));
+        })
+    });
+
+    let time = start.elapsed().as_secs_f64();
+    eprintln!("computed PFP distribution");
+    eprintln!(
+        "{time:.2} s - {:.2} GB / s",
+        (input_size * args.w.len() * args.p.len()) as f64 / 1e9 / time
+    );
+
+    println!("{}", serde_json::to_string(&hists).unwrap());
+}
+
+#[derive(Serialize)]
+struct Hist {
+    w: usize,
+    p: usize,
+    total: usize,
+    hist: Vec<u32>,
+}
+
+fn compute_hist(seqs: &[PackedSeqVec], w: usize, p: usize, seed: Option<u32>) -> Hist {
+    let mut dists: Vec<Vec<u32>> = Vec::with_capacity(seqs.len());
+    let mut hist = vec![0; p * 3];
+
+    seqs.par_iter()
+        .map(|seq| {
+            let (hash_iter, padding) =
+                nthash_seq_simd::<false, PackedSeq, SIMDHasher>(seq.as_slice(), w, 1, seed);
+            let threshold = u32x8::new([u32::MAX / p as u32 + 1; 8]);
+            let offset = hash_iter.len();
+            let offsets = from_fn(|i| (i * offset) as u32);
+            let mut positions = Vec::with_capacity(offset * 9 / p);
+
+            let mut pos = u32x8::new(offsets);
+            let mut selected_pos = pos;
+            let selected_pos_iter = hash_iter.map(|hash| {
+                // let hash = hash * u32x8::new([71; 8]);
+                let is_selected = hash.cmp_lt(threshold);
+                selected_pos = is_selected.blend(pos, selected_pos);
+                pos += u32x8::ONE;
+                selected_pos
+            });
+            collect_and_dedup_into((selected_pos_iter, padding), &mut positions);
+            for i in 0..(positions.len() - 1) {
+                positions[i] = positions[i + 1] - positions[i];
+            }
+            positions.pop();
+            positions
+        })
+        .collect_into_vec(&mut dists);
+
+    let total = dists.iter().map(|v| v.len()).sum::<usize>();
+    dists.iter().for_each(|dist| {
+        dist.iter().map(|&d| d as usize).for_each(|d| {
+            if d < hist.len() {
+                hist[d] += 1;
+            }
+        })
+    });
+    Hist { w, p, total, hist }
+}

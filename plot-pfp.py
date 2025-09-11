@@ -21,10 +21,10 @@ for p in hist:
     alpha = 0.8 if nw > 1 else 1
     for i, w in enumerate(hist[p]):
         h = hist[p][w]
-        x = list(range(len(h)))
-        x_ = [k + i / nw for k in x]
-        y = [1 / p * (1 - 1 / p) ** k for k in x]
-        plt.bar(x_, h, width=1 / nw, alpha=alpha, label=f"$w={w}$")
+        x = [k + i / nw for k in range(len(h))]
+        plt.bar(x, h, width=1 / nw, alpha=alpha, label=f"$w={w}$")
+    x = list(range(1, len(h)))
+    y = [1 / p * (1 - 1 / p) ** (k - 1) for k in x]
     plt.plot(x, y, "r", label="geometric")
     plt.ylim(top=2 / p)
     plt.title(f"PFP phrase size distribution ($p={p}$)")

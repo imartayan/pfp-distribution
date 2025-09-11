@@ -88,9 +88,8 @@ fn main() {
     });
 
     let time = start.elapsed().as_secs_f64();
-    eprintln!("computed PFP distribution");
     eprintln!(
-        "{time:.2} s - {:.2} GB / s",
+        "computed PFP distribution in {time:.2}s - {:.2} GB/s",
         (input_size * args.w.len() * args.p.len()) as f64 / 1e9 / time
     );
 

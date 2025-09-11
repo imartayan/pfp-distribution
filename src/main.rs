@@ -8,14 +8,14 @@ use rayon::{ThreadPoolBuilder, current_num_threads};
 use serde::Serialize;
 use std::time::Instant;
 
-#[cfg(not(feature = "alt"))]
+#[cfg(feature = "nthash")]
 use simd_minimizers as simd_mini;
-#[cfg(feature = "alt")]
+#[cfg(not(feature = "nthash"))]
 use simd_minimizers_alt as simd_mini;
 
-#[cfg(feature = "mul")]
+#[cfg(feature = "mulhash")]
 use simd_mini::private::nthash::MulHasher as SIMDHasher;
-#[cfg(not(feature = "mul"))]
+#[cfg(not(feature = "mulhash"))]
 use simd_mini::private::nthash::NtHasher as SIMDHasher;
 
 use simd_mini::packed_seq;
@@ -121,7 +121,6 @@ fn compute_hist(seqs: &[PackedSeqVec], w: usize, p: usize, seed: Option<u32>) ->
             let mut pos = u32x8::new(offsets);
             let mut selected_pos = pos;
             let selected_pos_iter = hash_iter.map(|hash| {
-                // let hash = hash * u32x8::new([71; 8]);
                 let is_selected = hash.cmp_lt(threshold);
                 selected_pos = is_selected.blend(pos, selected_pos);
                 pos += u32x8::ONE;

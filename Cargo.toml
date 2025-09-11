@@ -13,8 +13,8 @@ simd-minimizers = "1.4"
 simd-minimizers-alt = { package = "simd-minimizers", git = "https://github.com/rust-seq/simd-minimizers.git", branch = "rot" }
 
 [features]
-alt = []
-mul = []
+nthash = []
+mulhash = []
 
 [profile.release]
 opt-level = 3

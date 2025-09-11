@@ -12,9 +12,9 @@ cargo r -r -- -w 10 -p 32 | python plot-pfp.py
 # plot multiple values of w at once
 cargo r -r -- -w 10 21 31 -p 32 -i <input.fa> | python plot-pfp.py
 
-# use an alternative version of NtHash (rotate by 7)
-cargo r -r -F alt -- -w 10 -p 32 -i <input.fa> | python plot-pfp.py
+# use the original version of NtHash (biased)
+cargo r -r -F nthash -- -w 10 -p 32 -i <input.fa> | python plot-pfp.py
 
 # use the multiplicative version of NtHash (MulHash)
-cargo r -r -F mul -- -w 10 -p 32 -i <input.fa> | python plot-pfp.py
+cargo r -r -F mulhash -- -w 10 -p 32 -i <input.fa> | python plot-pfp.py
 ```

@@ -1,26 +1,22 @@
 use clap::Parser;
 use core::array::from_fn;
 use needletail::parse_fastx_file;
-use packed_seq::u32x8;
-use packed_seq::{PackedSeq, PackedSeqVec, SeqVec};
 use rayon::prelude::*;
 use rayon::{ThreadPoolBuilder, current_num_threads};
 use serde::Serialize;
 use std::time::Instant;
 
-#[cfg(feature = "nthash")]
-use simd_minimizers as simd_mini;
-#[cfg(not(feature = "nthash"))]
-use simd_minimizers_alt as simd_mini;
+use simd_minimizers::collect::CollectAndDedup;
+use simd_minimizers::packed_seq::{PackedSeqVec, SeqVec};
+use simd_minimizers::private::S;
+use simd_minimizers::seq_hash::KmerHasher;
 
 #[cfg(feature = "mulhash")]
-use simd_mini::private::nthash::MulHasher as SIMDHasher;
-#[cfg(not(feature = "mulhash"))]
-use simd_mini::private::nthash::NtHasher as SIMDHasher;
-
-use simd_mini::packed_seq;
-use simd_mini::private::collect::collect_and_dedup_into;
-use simd_mini::private::nthash::nthash_seq_simd;
+type SIMDHasher = simd_minimizers::seq_hash::MulHasher<false>;
+#[cfg(all(feature = "nthash", not(feature = "mulhash")))]
+type SIMDHasher = simd_minimizers::seq_hash::NtHasher<false, 1>;
+#[cfg(not(any(feature = "mulhash", feature = "nthash")))]
+type SIMDHasher = simd_minimizers::seq_hash::NtHasher<false>;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -110,22 +106,25 @@ fn compute_hist(seqs: &[PackedSeqVec], w: usize, p: usize, seed: Option<u32>) ->
 
     seqs.par_iter()
         .map(|seq| {
-            let (hash_iter, padding) =
-                nthash_seq_simd::<false, PackedSeq, SIMDHasher>(seq.as_slice(), w, 1, seed);
-            let threshold = u32x8::new([u32::MAX / p as u32 + 1; 8]);
-            let offset = hash_iter.len();
+            let hasher = match seed {
+                Some(seed) => SIMDHasher::new_with_seed(w, seed),
+                None => SIMDHasher::new(w),
+            };
+            let hash_iter = hasher.hash_kmers_simd(seq.as_slice(), 1);
+            let threshold = S::new([u32::MAX / p as u32 + 1; 8]);
+            let offset = hash_iter.it.len();
             let offsets = from_fn(|i| (i * offset) as u32);
             let mut positions = Vec::with_capacity(offset * 9 / p);
 
-            let mut pos = u32x8::new(offsets);
+            let mut pos = S::new(offsets);
             let mut selected_pos = pos;
             let selected_pos_iter = hash_iter.map(|hash| {
                 let is_selected = hash.cmp_lt(threshold);
                 selected_pos = is_selected.blend(pos, selected_pos);
-                pos += u32x8::ONE;
+                pos += S::ONE;
                 selected_pos
             });
-            collect_and_dedup_into((selected_pos_iter, padding), &mut positions);
+            selected_pos_iter.collect_and_dedup_into::<false>(&mut positions);
             for i in 0..(positions.len() - 1) {
                 positions[i] = positions[i + 1] - positions[i];
             }
